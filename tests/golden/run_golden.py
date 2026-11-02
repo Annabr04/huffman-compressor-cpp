@@ -87,7 +87,7 @@ def main():
         enc = b""
         for line in meta.split(b"\n"):
             if line.startswith(b"ENCODED="): enc = line[8:]
-        ok = p.returncode == 0 and integ and os.path.exists(out) is not None and meta != b""
+        ok = p.returncode == 0 and integ and os.path.exists(out) and meta != b""
         if n == "empty.bin":
             ok = ok and enc == b""
         status = "PASS" if ok else "FAIL"
