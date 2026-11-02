@@ -80,19 +80,23 @@ def main():
         if n in gv and gv[n] != data: print(f"GENERATOR-MISMATCH {n}"); fails += 1; continue
         with tempfile.TemporaryDirectory() as td:
             out = os.path.join(td, "out.txt")
-            p = subprocess.run([a.bin, "--diagnostic", "--input", os.path.join(VDIR, n), "--output", out],
-                               capture_output=True)
+            dec = os.path.join(td, "decoded.bin")
+            p = subprocess.run([a.bin, "--diagnostic", "--input", os.path.join(VDIR, n), "--output", out,
+                                "--decoded-output", dec], capture_output=True)
             out_exists = os.path.exists(out)   # must be checked before td is deleted
             meta = open(out, "rb").read() if out_exists else b""
+            decoded = open(dec, "rb").read() if os.path.exists(dec) else None
         integ = b"INTEGRITY=PASS" in meta
         enc = b""
         for line in meta.split(b"\n"):
             if line.startswith(b"ENCODED="): enc = line[8:]
-        ok = p.returncode == 0 and integ and out_exists and meta != b""
+        # independent round-trip check: decoded bytes must hash to SHA256SUMS entry
+        rt = decoded is not None and sha(decoded) == h and decoded == data
+        ok = p.returncode == 0 and integ and out_exists and meta != b"" and rt
         if n == "empty.bin":
             ok = ok and enc == b""
         status = "PASS" if ok else "FAIL"
-        detail = f"rc={p.returncode} integrity={'PASS' if integ else 'FAIL/none'} bits={len(enc)}"
+        detail = f"rc={p.returncode} integrity={'PASS' if integ else 'FAIL/none'} roundtrip={'OK' if rt else ('NO-DECODED' if decoded is None else 'MISMATCH')} bits={len(enc)}"
         if n in XFAIL_MAXLEN:
             ml = huff_maxlen(data)
             if ok and ml <= MAX_CODE_LEN: status = "XPASS(unexpected)"; fails += 1
