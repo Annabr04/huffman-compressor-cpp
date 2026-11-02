@@ -82,12 +82,13 @@ def main():
             out = os.path.join(td, "out.txt")
             p = subprocess.run([a.bin, "--diagnostic", "--input", os.path.join(VDIR, n), "--output", out],
                                capture_output=True)
-            meta = open(out, "rb").read() if os.path.exists(out) else b""
+            out_exists = os.path.exists(out)   # must be checked before td is deleted
+            meta = open(out, "rb").read() if out_exists else b""
         integ = b"INTEGRITY=PASS" in meta
         enc = b""
         for line in meta.split(b"\n"):
             if line.startswith(b"ENCODED="): enc = line[8:]
-        ok = p.returncode == 0 and integ and os.path.exists(out) and meta != b""
+        ok = p.returncode == 0 and integ and out_exists and meta != b""
         if n == "empty.bin":
             ok = ok and enc == b""
         status = "PASS" if ok else "FAIL"
