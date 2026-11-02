@@ -1,11 +1,16 @@
 name: golden-vectors
 on: [push, pull_request]
+permissions:
+  contents: read
 jobs:
   golden:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12.7"
       - name: Build
         run: g++ -std=c++17 -O2 -Wall -o huff HuffmanCompressor/src/main.cpp
       - name: Golden-vector round-trip (exits nonzero on any mismatch)
-        run: python3 tests/golden/run_golden.py --bin ./huff
+        run: python tests/golden/run_golden.py --bin ./huff
