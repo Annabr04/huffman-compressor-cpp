@@ -71,7 +71,7 @@ std::string hashToHex(uint64_t h) {
 int main(int argc, char* argv[]) {
     std::string inputText;
     bool diagnosticMode = false;
-    std::string inputFile, outputFile;
+    std::string inputFile, outputFile, decodedFile, dumpCodesFile;
 
     // Simple arg parsing for device/app connection style
     for (int i = 1; i < argc; ++i) {
@@ -82,6 +82,10 @@ int main(int argc, char* argv[]) {
             inputFile = argv[++i];
         } else if (arg == "--output" && i + 1 < argc) {
             outputFile = argv[++i];
+        } else if (arg == "--decoded-output" && i + 1 < argc) {
+            decodedFile = argv[++i];   // test hook: raw decoded bytes
+        } else if (arg == "--dump-codes" && i + 1 < argc) {
+            dumpCodesFile = argv[++i]; // test hook: "sym len" per used symbol
         }
     }
 
@@ -177,6 +181,16 @@ int main(int argc, char* argv[]) {
 
     if (!integrityPass) {
         std::cout << "[FAULT] Integrity failed. In production device mode this would fall back to uncompressed.\n";
+    }
+
+    if (!decodedFile.empty()) {
+        std::ofstream d(decodedFile, std::ios::binary);
+        d.write(decoded.data(), static_cast<std::streamsize>(decoded.size()));
+    }
+    if (!dumpCodesFile.empty()) {
+        std::ofstream d(dumpCodesFile, std::ios::binary);
+        for (int s = 0; s < 256; ++s)
+            if (!codes[s].empty()) d << s << " " << codes[s].size() << "\n";
     }
 
     freeTree(root);
