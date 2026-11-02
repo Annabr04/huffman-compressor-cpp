@@ -8,7 +8,7 @@ Vectors marked 'legacy' are the 2026-11-02 review vectors, pinned by hash.
 Generated vectors are deterministic (Python random.Random, SEED below).
 Exit: 0 = all PASS/XFAIL, 1 = any FAIL / mismatch / unexpected pass.
 """
-import argparse, hashlib, heapq, os, random, subprocess, sys, tempfile
+import argparse, hashlib, os, random, subprocess, sys, tempfile
 
 SEED = 20261102          # recorded PRNG seed for random_1mib
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -41,22 +41,20 @@ XFAIL_MAXLEN = {"fib.bin", "fib26_maxlen.bin"}
 
 def sha(b): return hashlib.sha256(b).hexdigest()
 
-def huff_maxlen(data):
-    """Max code length of an unrestricted Huffman tree for data (mirrors the
-    binary's algorithm; binary has no --dump-codes yet)."""
-    f = {}
-    for c in data: f[c] = f.get(c, 0) + 1
-    if len(f) <= 1: return 1 if f else 0
-    h = [(n, i, 0) for i, n in enumerate(f.values())]; heapq.heapify(h); k = len(h)
-    while len(h) > 1:
-        a, b = heapq.heappop(h), heapq.heappop(h)
-        k += 1; heapq.heappush(h, (a[0] + b[0], k, max(a[2], b[2]) + 1))
-    return h[0][2]
+def read_dump(path):
+    """Parse binary's --dump-codes output ('sym len' lines) -> {sym: len}."""
+    if not os.path.exists(path): return None
+    d = {}
+    for line in open(path):
+        sym, ln = line.split(); d[int(sym)] = int(ln)
+    return d
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--generate", action="store_true")
     ap.add_argument("--bin")
+    ap.add_argument("--max-code-len", type=int, default=MAX_CODE_LEN,
+                    help="code-length limit (default 15); override only for self-test")
     a = ap.parse_args()
     if a.generate:
         os.makedirs(VDIR, exist_ok=True)
@@ -81,11 +79,13 @@ def main():
         with tempfile.TemporaryDirectory() as td:
             out = os.path.join(td, "out.txt")
             dec = os.path.join(td, "decoded.bin")
+            cdump = os.path.join(td, "codes.txt")
             p = subprocess.run([a.bin, "--diagnostic", "--input", os.path.join(VDIR, n), "--output", out,
-                                "--decoded-output", dec], capture_output=True)
+                                "--decoded-output", dec, "--dump-codes", cdump], capture_output=True)
             out_exists = os.path.exists(out)   # must be checked before td is deleted
             meta = open(out, "rb").read() if out_exists else b""
             decoded = open(dec, "rb").read() if os.path.exists(dec) else None
+            codes = read_dump(cdump)
         integ = b"INTEGRITY=PASS" in meta
         enc = b""
         for line in meta.split(b"\n"):
@@ -97,11 +97,17 @@ def main():
             ok = ok and enc == b""
         status = "PASS" if ok else "FAIL"
         detail = f"rc={p.returncode} integrity={'PASS' if integ else 'FAIL/none'} roundtrip={'OK' if rt else ('NO-DECODED' if decoded is None else 'MISMATCH')} bits={len(enc)}"
+        # code lengths come from the binary itself (--dump-codes)
+        if codes is None or set(codes) != set(data):
+            ok = False; status = "FAIL"; detail += " codes=MISSING/MISMATCH"; ml = None
+        else:
+            ml = max(codes.values(), default=0); detail += f" maxlen={ml}"
         if n in XFAIL_MAXLEN:
-            ml = huff_maxlen(data)
-            if ok and ml <= MAX_CODE_LEN: status = "XPASS(unexpected)"; fails += 1
-            elif ok: status = "XFAIL"; detail += f" maxlen={ml}>{MAX_CODE_LEN} (round-trip ok; awaiting P2 length-limit)"
+            if ok and ml <= a.max_code_len: status = "XPASS(unexpected)"; fails += 1; detail += " -> remove XFAIL marker"
+            elif ok: status = "XFAIL"; detail += f">{a.max_code_len} (round-trip ok; awaiting P2 length-limit)"
             else: fails += 1
+        elif ok and ml > a.max_code_len:
+            status = "FAIL"; fails += 1; detail += f">{a.max_code_len}"
         elif not ok: fails += 1
         print(f"{status:18} {n:18} sha256={h[:16]} {detail}")
     print(f"RESULT: {'FAIL' if fails else 'OK'} ({fails} failure(s))")
