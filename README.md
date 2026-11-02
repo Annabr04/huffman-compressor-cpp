@@ -7,3 +7,5 @@ Simple Huffman coding for lossless text/byte compression, extended with:
 - Metadata output for device/app transparency
 
 See HuffmanCompressor/README.md for usage.
+
+> **Note (P1):** Encoded bits are not yet deterministic across compilers/standard libraries (equal-frequency tie order). Round-trip output is lossless and verified by decoded-byte SHA-256; deterministic encoding arrives with P2.

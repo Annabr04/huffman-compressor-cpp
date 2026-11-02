@@ -9,27 +9,37 @@
 #include <iomanip>
 #include <cstdint>
 
+#include <array>
+
+// P1: explicit leaf flag + unsigned byte symbol. No '\0' sentinel, so byte 0x00
+// is an ordinary symbol.
 struct Node {
-    char ch;
-    int freq;
+    unsigned char sym;
+    bool is_leaf;
+    uint64_t freq;
     Node* left;
     Node* right;
 
-    Node(char c, int f) : ch(c), freq(f), left(nullptr), right(nullptr) {}
-    Node(Node* l, Node* r) : ch('\0'), freq(l->freq + r->freq), left(l), right(r) {}
+    Node(unsigned char c, uint64_t f) : sym(c), is_leaf(true), freq(f), left(nullptr), right(nullptr) {}
+    Node(Node* l, Node* r) : sym(0), is_leaf(false), freq(l->freq + r->freq), left(l), right(r) {}
 };
 
 struct Compare {
     bool operator()(Node* a, Node* b) {
-        return a->freq > b->freq;
+        if (a->freq != b->freq) return a->freq > b->freq;
+        // deterministic tie-break: leaves first, then by symbol
+        if (a->is_leaf != b->is_leaf) return !a->is_leaf;
+        return a->sym > b->sym;
     }
 };
 
 void buildCodes(Node* root, const std::string& prefix,
-                std::unordered_map<char, std::string>& codes) {
+                std::array<std::string, 256>& codes) {
     if (!root) return;
-    if (!root->left && !root->right && root->ch != '\0') {
-        codes[root->ch] = prefix;
+    if (root->is_leaf) {
+        // single-symbol input: root is a leaf -> 1-bit code "0"
+        codes[root->sym] = prefix.empty() ? "0" : prefix;
+        return;
     }
     buildCodes(root->left, prefix + "0", codes);
     buildCodes(root->right, prefix + "1", codes);
@@ -61,7 +71,7 @@ std::string hashToHex(uint64_t h) {
 int main(int argc, char* argv[]) {
     std::string inputText;
     bool diagnosticMode = false;
-    std::string inputFile, outputFile;
+    std::string inputFile, outputFile, decodedFile, dumpCodesFile;
 
     // Simple arg parsing for device/app connection style
     for (int i = 1; i < argc; ++i) {
@@ -72,6 +82,10 @@ int main(int argc, char* argv[]) {
             inputFile = argv[++i];
         } else if (arg == "--output" && i + 1 < argc) {
             outputFile = argv[++i];
+        } else if (arg == "--decoded-output" && i + 1 < argc) {
+            decodedFile = argv[++i];   // test hook: raw decoded bytes
+        } else if (arg == "--dump-codes" && i + 1 < argc) {
+            dumpCodesFile = argv[++i]; // test hook: "sym len" per used symbol
         }
     }
 
@@ -89,10 +103,11 @@ int main(int argc, char* argv[]) {
         std::getline(std::cin, inputText);
     }
 
-    if (inputText.empty()) {
+    if (inputText.empty() && inputFile.empty()) {
         std::cout << "No input provided. Exiting.\n";
         return 0;
     }
+    // P1: an empty input file is a valid round-trip (empty payload, rc 0).
 
     uint64_t originalHash = simpleHash(inputText);
     std::cout << "Original integrity hash: " << hashToHex(originalHash) << "\n";
@@ -101,22 +116,14 @@ int main(int argc, char* argv[]) {
         std::cout << "[DIAGNOSTIC LOCK] Lossless mode enforced. Lossy transforms disabled.\n";
     }
 
-    std::unordered_map<char, int> freq;
+    std::array<uint64_t, 256> freq{};
     for (unsigned char c : inputText) {
-        freq[static_cast<char>(c)]++;
+        freq[c]++;
     }
 
     std::priority_queue<Node*, std::vector<Node*>, Compare> pq;
-    for (auto& kv : freq) {
-        pq.push(new Node(kv.first, kv.second));
-    }
-
-    if (pq.empty()) return 0;
-
-    if (pq.size() == 1) {
-        Node* only = pq.top(); pq.pop();
-        Node* root = new Node(only, new Node('\0', 0));
-        pq.push(root);
+    for (int s = 0; s < 256; ++s) {
+        if (freq[s]) pq.push(new Node(static_cast<unsigned char>(s), freq[s]));
     }
 
     while (pq.size() > 1) {
@@ -126,25 +133,29 @@ int main(int argc, char* argv[]) {
         pq.push(parent);
     }
 
-    Node* root = pq.top();
+    Node* root = pq.empty() ? nullptr : pq.top();
 
-    std::unordered_map<char, std::string> codes;
+    std::array<std::string, 256> codes;
     buildCodes(root, "", codes);
 
     std::string encoded;
     for (unsigned char c : inputText) {
-        encoded += codes[static_cast<char>(c)];
+        encoded += codes[c];
     }
 
     // Round-trip integrity check (mimics CT-01 SHA-256 style verification)
     std::string decoded;
-    Node* current = root;
-    for (char bit : encoded) {
-        if (bit == '0') current = current->left;
-        else current = current->right;
-        if (!current->left && !current->right) {
-            decoded += current->ch;
-            current = root;
+    if (root && root->is_leaf) {
+        // single-symbol tree: each bit is one symbol
+        decoded.assign(encoded.size(), static_cast<char>(root->sym));
+    } else {
+        Node* current = root;
+        for (char bit : encoded) {
+            current = (bit == '0') ? current->left : current->right;
+            if (current->is_leaf) {
+                decoded += static_cast<char>(current->sym);
+                current = root;
+            }
         }
     }
 
@@ -156,7 +167,7 @@ int main(int argc, char* argv[]) {
     std::cout << "Messages checked: 1 | Passed: " << (integrityPass ? 1 : 0) << "\n";
 
     if (!outputFile.empty()) {
-        std::ofstream out(outputFile);
+        std::ofstream out(outputFile, std::ios::binary);
         out << "DIAGNOSTIC_MODE=" << (diagnosticMode ? "true" : "false") << "\n";
         out << "ORIGINAL_HASH=" << hashToHex(originalHash) << "\n";
         out << "ENCODED=" << encoded << "\n";
@@ -170,6 +181,16 @@ int main(int argc, char* argv[]) {
 
     if (!integrityPass) {
         std::cout << "[FAULT] Integrity failed. In production device mode this would fall back to uncompressed.\n";
+    }
+
+    if (!decodedFile.empty()) {
+        std::ofstream d(decodedFile, std::ios::binary);
+        d.write(decoded.data(), static_cast<std::streamsize>(decoded.size()));
+    }
+    if (!dumpCodesFile.empty()) {
+        std::ofstream d(dumpCodesFile, std::ios::binary);
+        for (int s = 0; s < 256; ++s)
+            if (!codes[s].empty()) d << s << " " << codes[s].size() << "\n";
     }
 
     freeTree(root);
