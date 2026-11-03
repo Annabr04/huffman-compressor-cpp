@@ -13,8 +13,7 @@ A simple C++ Huffman coding implementation extended for device/app integration c
 ## Build & Run
 
 ```bash
-cd HuffmanCompressor/src
-g++ -std=c++17 main.cpp -o huff
+g++ -std=c++17 -O2 -Wall -o huff HuffmanCompressor/src/main.cpp
 ```
 
 ### Interactive
