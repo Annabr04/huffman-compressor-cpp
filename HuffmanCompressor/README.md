@@ -6,12 +6,14 @@ A simple C++ Huffman coding implementation extended for device/app integration c
 - Frequency counting and canonical, length-limited (max 15 bits) Huffman codes identical to CT-01's `huffman.cpp`
 - Stored bypass (`MODE=STORED`) when Huffman would not be smaller than the raw input
 - Encoding / decoding with round-trip verification
-- Lightweight integrity hash (FNV-1a) + exact decode match
+- SHA-256 integrity hash (self-contained `sha256.hpp`, FIPS 180-4, no external deps) + exact decode match
 - `--diagnostic` flag that enforces lossless lock (no lossy path)
 - File input/output for synthetic payloads or sensor-stream style data
 - Metadata output suitable for a companion dashboard or device log
 
 ## Build & Run
+
+Requires C++17 (`-std=c++17` or later); `sha256.hpp` relies on C++17 inline static constexpr members and fails the build with a clear `static_assert` otherwise.
 
 ```bash
 g++ -std=c++17 -O2 -Wall -o huff HuffmanCompressor/src/main.cpp
@@ -29,7 +31,7 @@ The prompt goes to stderr and only when stdin is a terminal, so piped stdout sta
 ./huff --input sample.txt --output payload.meta --diagnostic
 ```
 
-This produces a small metadata file containing the mode (`MODE=HUFFMAN` or `MODE=STORED`), the encoded bits (ASCII '0'/'1'; in STORED mode each raw byte as 8 bits, MSB first), original hash, and integrity result — useful as a reference for the Entropy + Verify stages of a medical data compression device.
+This produces a small metadata file containing the mode (`MODE=HUFFMAN` or `MODE=STORED`), the encoded bits (ASCII '0'/'1'; in STORED mode each raw byte as 8 bits, MSB first), `INTEGRITY_HASH=sha256:<hex>` of the original input, and integrity result — useful as a reference for the Entropy + Verify stages of a medical data compression device.
 
 ## Reference scope (not a CT-01 wire format)
 - `MODE=` (`HUFFMAN` / `STORED`) and the other `KEY=value` lines are reference metadata for tests and dashboards, not a wire format. The CT-01 wire format (CT1F frame + CRC-32) lives only in ct01.
@@ -37,8 +39,12 @@ This produces a small metadata file containing the mode (`MODE=HUFFMAN` or `MODE
 - The decoder only decodes the binary's own just-produced output in-process (no CLI path reads external `ENCODED` or metadata). It is not hardened for untrusted input yet (no Kraft/over-subscription or padding rejection); full hardening comes in P4.
 - **P4 TODO (external decode):** when a decode path for received data lands, keep the per-symbol `len <= 15` check and add Kraft `<= 1` (over-subscription) validation on the received length table, plus ct01's nonzero-padding and trailing-bits rejection, with negative tests.
 
+## Metadata key change (for parsers)
+`ORIGINAL_HASH=<16-hex FNV-1a>` has been replaced by `INTEGRITY_HASH=sha256:<64-hex>` (same position, line 2 of the `--output` file). The old key is not emitted alongside it; anything parsing the metadata (Data Engineer pipelines, UX status screens) must read `INTEGRITY_HASH` and treat the `sha256:` prefix as part of the value.
+
 ## Integration Notes
 - Diagnostic mode locks the path to lossless (matching CT-01 behavior).
+- Integrity hash: SHA-256 of the original vs the decoded bytes (`INTEGRITY_HASH=sha256:<hex>`). It is not a MAC: it detects accidental corruption, not tampering. Authenticity is out of scope for this repo; in CT-01, at-rest authenticity comes from the AES-256-GCM sealed buffer/log; in-transit authenticity (TLS / per-frame MAC) is open pre-pilot. Per the UX contract it is never shown on dashboards (device log / test use only).
 - Exit code: 0 on a verified round-trip, 2 on any round-trip mismatch, 1 if the input file cannot be opened.
 - Test hooks: `--decoded-output FILE` (decoded bytes) and `--dump-codes FILE` (`sym len` per used symbol).
 - Integrity failure is reported and can be mapped to the device fault path (send uncompressed + notify).

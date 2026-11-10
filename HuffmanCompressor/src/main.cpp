@@ -3,12 +3,13 @@
 #include <cstddef>
 #include <cstdint>
 #include <fstream>
-#include <iomanip>
 #include <iostream>
 #include <iterator>
 #include <sstream>
 #include <string>
 #include <utility>
+
+#include "sha256.hpp"
 
 #if defined(_WIN32)
 #include <io.h>
@@ -236,21 +237,9 @@ bool stored_decode(const std::string& bits, std::string& out) {
 
 }  // namespace
 
-// Simple FNV-1a 64-bit hash for integrity (lightweight, no external deps)
-uint64_t simpleHash(const std::string& data) {
-    uint64_t hash = 14695981039346656037ULL;
-    for (unsigned char c : data) {
-        hash ^= c;
-        hash *= 1099511628211ULL;
-    }
-    return hash;
-}
-
-std::string hashToHex(uint64_t h) {
-    std::stringstream ss;
-    ss << std::hex << std::setw(16) << std::setfill('0') << h;
-    return ss.str();
-}
+// Integrity hash: SHA-256 (sha256.hpp, self-contained). Printed and written as
+// "sha256:<64 hex>". Not a MAC: it detects accidental corruption only.
+static std::string integrityHash(const std::string& data) { return "sha256:" + sha256::hex(sha256::hash(data)); }
 
 int main(int argc, char* argv[]) {
     std::string inputText;
@@ -295,8 +284,8 @@ int main(int argc, char* argv[]) {
     // Empty input (empty --input file or empty stdin) is a valid round-trip:
     // MODE=STORED, empty ENCODED, rc 0.
 
-    uint64_t originalHash = simpleHash(inputText);
-    std::cout << "Original integrity hash: " << hashToHex(originalHash) << "\n";
+    const std::string originalHash = integrityHash(inputText);
+    std::cout << "Original integrity hash: " << originalHash << "\n";
 
     if (diagnosticMode) {
         std::cout << "[DIAGNOSTIC LOCK] Lossless mode enforced. Lossy transforms disabled.\n";
@@ -332,19 +321,19 @@ int main(int argc, char* argv[]) {
     const bool decodeOk = stored ? stored_decode(encoded, decoded)
                                  : canonical_decode(encoded, w.len, rawSize, decoded);
 
-    uint64_t decodedHash = simpleHash(decoded);
+    const std::string decodedHash = integrityHash(decoded);
     bool integrityPass = decodeOk && (decoded == inputText) && (decodedHash == originalHash);
 
     std::cout << "Mode: " << (stored ? "STORED" : "HUFFMAN") << " (huffman " << packedSize
               << " bytes vs raw " << rawSize << " bytes)\n";
     std::cout << "Integrity check: " << (integrityPass ? "PASS" : "FAIL") << "\n";
-    std::cout << "Decoded hash: " << hashToHex(decodedHash) << "\n";
+    std::cout << "Decoded hash: " << decodedHash << "\n";
     std::cout << "Messages checked: 1 | Passed: " << (integrityPass ? 1 : 0) << "\n";
 
     if (!outputFile.empty()) {
         std::ofstream out(outputFile, std::ios::binary);
         out << "DIAGNOSTIC_MODE=" << (diagnosticMode ? "true" : "false") << "\n";
-        out << "ORIGINAL_HASH=" << hashToHex(originalHash) << "\n";
+        out << "INTEGRITY_HASH=" << originalHash << "\n";
         out << "MODE=" << (stored ? "STORED" : "HUFFMAN") << "\n";
         out << "ENCODED=" << encoded << "\n";
         out << "INTEGRITY=" << (integrityPass ? "PASS" : "FAIL") << "\n";

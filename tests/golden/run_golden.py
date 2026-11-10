@@ -14,6 +14,9 @@ otherwise STORED (near_expand/highent must be STORED).
 ENCODED is compiler-stable since P2, so its SHA-256 is pinned per vector in
 ENCODED_SHA256SUMS (D1): any bit flip or code/tie/flattening change FAILs.
 Re-pin only for a reviewed codec change: run_golden.py --bin PATH --pin-encoded.
+Integrity hash is SHA-256: INTEGRITY_HASH=sha256:<hex> in the metadata and the
+printed original/decoded hashes must equal hashlib.sha256 of the input on every
+vector, and the built-in SHA-256 must pass NIST/FIPS 180-4 known-answer tests.
 Every vector is also fed via stdin (no --input): same metadata as file mode,
 exact decoded bytes, rc 0, and nothing on stderr (no prompt when not a tty).
 Empty stdin must round-trip like empty.bin (MODE=STORED, empty ENCODED, rc 0).
@@ -69,6 +72,30 @@ def ct01_packed_size(n, bits):
     return vlen + 128 + (bits + 7) // 8
 
 def sha(b): return hashlib.sha256(b).hexdigest()
+
+# FIPS 180-4 / NIST CAVP SHA-256 known answers (+ padding-boundary lengths, checked vs hashlib)
+KAT = [
+    ("empty", b"", "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"),
+    ("abc", b"abc", "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"),
+    ("nist448", b"abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq",
+     "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1"),
+    ("nist896", b"abcdefghbcdefghicdefghijdefghijkefghijklfghijklmghijklmnhijklmnoijklmnopjklmnopqklmnopqrlmnopqrsmnopqrstnopqrstu",
+     "cf5b16a778af8380036ce59e7b0492370b249b11e8f07a51afac45037afee9d1"),
+    ("million_a", b"a" * 1000000, "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0"),
+] + [(f"a{n}", b"a" * n, None) for n in (55, 56, 63, 64, 65, 119, 120, 127, 128)]
+
+def printed_hashes(stdout):
+    """'Original integrity hash: X' and 'Decoded hash: Y' from the binary's stdout."""
+    o = d = None
+    for line in stdout.decode(errors="replace").splitlines():
+        if line.startswith("Original integrity hash: "): o = line.split(": ", 1)[1].strip()
+        if line.startswith("Decoded hash: "): d = line.split(": ", 1)[1].strip()
+    return o, d
+
+def meta_hash(meta):
+    for line in meta.split(b"\n"):
+        if line.startswith(b"INTEGRITY_HASH="): return line[15:].decode(errors="replace")
+    return None
 
 def read_dump(path):
     """Parse binary's --dump-codes output ('sym len' lines) -> {sym: len}."""
@@ -128,6 +155,9 @@ def main():
             if line.startswith(b"MODE="): mode = line[5:].decode(errors="replace")
         # independent round-trip check: decoded bytes must hash to SHA256SUMS entry
         rt = decoded is not None and sha(decoded) == h and decoded == data
+        want_h = "sha256:" + sha(data)
+        po, pd = printed_hashes(p.stdout)
+        hash_ok = meta_hash(meta) == want_h and po == want_h and pd == want_h
         ok = p.returncode == 0 and integ and out_exists and meta != b"" and rt
         if n == "empty.bin":
             ok = ok and enc == b""
@@ -139,6 +169,7 @@ def main():
         else:
             ml = max(codes.values(), default=0); detail += f" maxlen={ml}"
         problems = []
+        if not hash_ok: problems.append("integrity-hash!=hashlib")
         if ml is not None:
             # hard assertion: max code length <= 15
             if ml > MAX_CODE_LEN: problems.append(f"maxlen>{MAX_CODE_LEN}")
@@ -163,6 +194,22 @@ def main():
             ok = False; status = "FAIL"; detail += " " + ",".join(problems)
         if not ok: fails += 1
         print(f"{status:18} {n:18} sha256={h[:16]} {detail}")
+    # SHA-256 known-answer tests through the binary (file mode)
+    for name, msg, want in KAT:
+        with tempfile.TemporaryDirectory() as td:
+            ip = os.path.join(td, "kat.bin"); out = os.path.join(td, "out.txt")
+            open(ip, "wb").write(msg)
+            p = subprocess.run([a.bin, "--input", ip, "--output", out], capture_output=True)
+            meta = open(out, "rb").read() if os.path.exists(out) else b""
+        exp = "sha256:" + (want or sha(msg))
+        problems = []
+        if want and sha(msg) != want: problems.append("KAT-constant-vs-hashlib")
+        po, pd = printed_hashes(p.stdout)
+        if p.returncode != 0: problems.append(f"rc={p.returncode}")
+        if meta_hash(meta) != exp: problems.append("meta")
+        if po != exp or pd != exp: problems.append("printed")
+        if problems: fails += 1
+        print(f"{'FAIL' if problems else 'PASS':18} sha256-kat:{name:10} {','.join(problems) or exp[:23]}")
     # stdin path (binary read until EOF; empty stdin is a valid round-trip)
     for n in sorted(expected):
         data = open(os.path.join(VDIR, n), "rb").read()
