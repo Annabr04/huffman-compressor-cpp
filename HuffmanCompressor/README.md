@@ -22,6 +22,7 @@ g++ -std=c++17 -O2 -Wall -o huff HuffmanCompressor/src/main.cpp
 ./huff                 # type data, end with Ctrl-D
 ./huff < sample.bin    # stdin is read as raw bytes until EOF
 ```
+The prompt goes to stderr and only when stdin is a terminal, so piped stdout stays clean. Empty stdin is a valid round-trip, exactly like an empty `--input` file (`MODE=STORED`, empty `ENCODED`, rc 0).
 
 ### File mode (device-style)
 ```bash
@@ -34,6 +35,7 @@ This produces a small metadata file containing the mode (`MODE=HUFFMAN` or `MODE
 - `MODE=` (`HUFFMAN` / `STORED`) and the other `KEY=value` lines are reference metadata for tests and dashboards, not a wire format. The CT-01 wire format (CT1F frame + CRC-32) lives only in ct01.
 - ct01's Entropy stage runs on post-LZ77 data, so absolute compression ratios here will not match ct01 end-to-end. The stored rule here (Huffman only if varint + 128-byte table + packed bits < input size) is applied to the raw input.
 - The decoder only decodes the binary's own just-produced output in-process (no CLI path reads external `ENCODED` or metadata). It is not hardened for untrusted input yet (no Kraft/over-subscription or padding rejection); full hardening comes in P4.
+- **P4 TODO (external decode):** when a decode path for received data lands, keep the per-symbol `len <= 15` check and add Kraft `<= 1` (over-subscription) validation on the received length table, plus ct01's nonzero-padding and trailing-bits rejection, with negative tests.
 
 ## Integration Notes
 - Diagnostic mode locks the path to lossless (matching CT-01 behavior).
