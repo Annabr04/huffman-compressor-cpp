@@ -11,6 +11,9 @@ P2 hard assertions: every code length <= 15 (ct01 kHuffMaxBits), complete
 prefix code (Kraft sum == 1, single symbol excepted), and the binary's MODE
 matches ct01's rule: Huffman only if varint(n) + 128 + ceil(bits/8) < n,
 otherwise STORED (near_expand/highent must be STORED).
+Every vector is also fed via stdin (no --input): same metadata as file mode,
+exact decoded bytes, rc 0, and nothing on stderr (no prompt when not a tty).
+Empty stdin must round-trip like empty.bin (MODE=STORED, empty ENCODED, rc 0).
 """
 import argparse, hashlib, os, random, subprocess, sys, tempfile
 from collections import Counter
@@ -80,6 +83,7 @@ def main():
         print(f"wrote {len(names)} vectors + SHA256SUMS (seed={SEED})"); return 0
     if not a.bin: ap.error("--bin or --generate required")
     fails = 0
+    file_meta = {}
     expected = {l.split()[1]: l.split()[0] for l in open(SUMS) if l.strip()}
     gv = gen()
     for n in LEGACY + list(gv):
@@ -98,6 +102,7 @@ def main():
             meta = open(out, "rb").read() if out_exists else b""
             decoded = open(dec, "rb").read() if os.path.exists(dec) else None
             codes = read_dump(cdump)
+        file_meta[n] = meta
         integ = b"INTEGRITY=PASS" in meta
         enc = b""; mode = None
         for line in meta.split(b"\n"):
@@ -134,6 +139,24 @@ def main():
             ok = False; status = "FAIL"; detail += " " + ",".join(problems)
         if not ok: fails += 1
         print(f"{status:18} {n:18} sha256={h[:16]} {detail}")
+    # stdin path (binary read until EOF; empty stdin is a valid round-trip)
+    for n in sorted(expected):
+        data = open(os.path.join(VDIR, n), "rb").read()
+        with tempfile.TemporaryDirectory() as td:
+            out = os.path.join(td, "out.txt"); dec = os.path.join(td, "decoded.bin")
+            p = subprocess.run([a.bin, "--diagnostic", "--output", out, "--decoded-output", dec],
+                               input=data, capture_output=True)
+            meta = open(out, "rb").read() if os.path.exists(out) else None
+            decoded = open(dec, "rb").read() if os.path.exists(dec) else None
+        problems = []
+        if p.returncode != 0: problems.append(f"rc={p.returncode}")
+        if p.stderr: problems.append("stderr-not-empty")
+        if decoded != data: problems.append("roundtrip")
+        if meta is None or meta != file_meta.get(n): problems.append("meta!=file-mode")
+        if n == "empty.bin" and (meta is None or b"MODE=STORED\n" not in meta or b"ENCODED=\n" not in meta):
+            problems.append("empty-stdin-not-stored")
+        if problems: fails += 1
+        print(f"{'FAIL' if problems else 'PASS':18} stdin:{n:12} {','.join(problems) or 'rc=0 meta==file-mode roundtrip=OK'}")
     print(f"RESULT: {'FAIL' if fails else 'OK'} ({fails} failure(s))")
     return 1 if fails else 0
 
