@@ -3,7 +3,8 @@
 A simple C++ Huffman coding implementation extended for device/app integration concepts used in the CT-01 / QuietLink style edge compression pipeline.
 
 ## Features
-- Frequency counting and Huffman tree construction
+- Frequency counting and canonical, length-limited (max 15 bits) Huffman codes identical to CT-01's `huffman.cpp`
+- Stored bypass (`MODE=STORED`) when Huffman would not be smaller than the raw input
 - Encoding / decoding with round-trip verification
 - Lightweight integrity hash (FNV-1a) + exact decode match
 - `--diagnostic` flag that enforces lossless lock (no lossy path)
@@ -16,9 +17,10 @@ A simple C++ Huffman coding implementation extended for device/app integration c
 g++ -std=c++17 -O2 -Wall -o huff HuffmanCompressor/src/main.cpp
 ```
 
-### Interactive
+### Interactive / stdin
 ```bash
-./huff
+./huff                 # type data, end with Ctrl-D
+./huff < sample.bin    # stdin is read as raw bytes until EOF
 ```
 
 ### File mode (device-style)
@@ -26,10 +28,12 @@ g++ -std=c++17 -O2 -Wall -o huff HuffmanCompressor/src/main.cpp
 ./huff --input sample.txt --output payload.meta --diagnostic
 ```
 
-This produces a small metadata file containing the encoded bits, original hash, and integrity result — useful as a reference for the Entropy + Verify stages of a medical data compression device.
+This produces a small metadata file containing the mode (`MODE=HUFFMAN` or `MODE=STORED`), the encoded bits (ASCII '0'/'1'; in STORED mode each raw byte as 8 bits, MSB first), original hash, and integrity result — useful as a reference for the Entropy + Verify stages of a medical data compression device.
 
 ## Integration Notes
 - Diagnostic mode locks the path to lossless (matching CT-01 behavior).
+- Exit code: 0 on a verified round-trip, 2 on any round-trip mismatch, 1 if the input file cannot be opened.
+- Test hooks: `--decoded-output FILE` (decoded bytes) and `--dump-codes FILE` (`sym len` per used symbol).
 - Integrity failure is reported and can be mapped to the device fault path (send uncompressed + notify).
 - Suitable as a reference/oracle component or starting point for a production C++ core entropy stage.
 - Synthetic data only; no PHI handling is implemented or intended here.
