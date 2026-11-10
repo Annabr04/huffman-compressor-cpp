@@ -10,6 +10,14 @@
 #include <string>
 #include <utility>
 
+#if defined(_WIN32)
+#include <io.h>
+static bool stdin_is_tty() { return _isatty(0) != 0; }
+#else
+#include <unistd.h>
+static bool stdin_is_tty() { return isatty(0) != 0; }
+#endif
+
 // P2: canonical, length-limited (max 15 bits) Huffman code lengths that mirror
 // CT-01's src/lib/huffman.cpp (plain_lengths / code_lengths_ws /
 // canonical_codes) exactly, so per-symbol code lengths and code bits match
@@ -277,15 +285,15 @@ int main(int argc, char* argv[]) {
     } else {
         // P2: read all of stdin as bytes until EOF (no getline, so 0x0A and
         // everything after it are kept). POSIX streams have no text mode.
-        std::cout << "Enter data to compress, end with EOF (Ctrl-D) (or use --input file): " << std::flush;
+        // Prompt only for an interactive terminal, and on stderr, so piped
+        // stdout stays clean.
+        if (stdin_is_tty())
+            std::cerr << "Enter data to compress, end with EOF (Ctrl-D) (or use --input file): " << std::flush;
         inputText.assign(std::istreambuf_iterator<char>(std::cin), std::istreambuf_iterator<char>());
     }
 
-    if (inputText.empty() && inputFile.empty()) {
-        std::cout << "No input provided. Exiting.\n";
-        return 0;
-    }
-    // P1: an empty input file is a valid round-trip (empty payload, rc 0).
+    // Empty input (empty --input file or empty stdin) is a valid round-trip:
+    // MODE=STORED, empty ENCODED, rc 0.
 
     uint64_t originalHash = simpleHash(inputText);
     std::cout << "Original integrity hash: " << hashToHex(originalHash) << "\n";
