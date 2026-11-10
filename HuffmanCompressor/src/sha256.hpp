@@ -12,6 +12,10 @@
 #include <cstdint>
 #include <string>
 
+static_assert(__cplusplus >= 201703L,
+              "sha256.hpp requires C++17 or later (build with -std=c++17): Hasher::K relies on "
+              "C++17 implicitly-inline static constexpr members");
+
 namespace sha256 {
 
 using Digest = std::array<std::uint8_t, 32>;
