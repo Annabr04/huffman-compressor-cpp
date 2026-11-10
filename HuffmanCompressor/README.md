@@ -13,6 +13,8 @@ A simple C++ Huffman coding implementation extended for device/app integration c
 
 ## Build & Run
 
+Requires C++17 (`-std=c++17` or later); `sha256.hpp` relies on C++17 inline static constexpr members and fails the build with a clear `static_assert` otherwise.
+
 ```bash
 g++ -std=c++17 -O2 -Wall -o huff HuffmanCompressor/src/main.cpp
 ```
@@ -42,7 +44,7 @@ This produces a small metadata file containing the mode (`MODE=HUFFMAN` or `MODE
 
 ## Integration Notes
 - Diagnostic mode locks the path to lossless (matching CT-01 behavior).
-- Integrity hash: SHA-256 of the original vs the decoded bytes (`INTEGRITY_HASH=sha256:<hex>`). It is not a MAC: it detects accidental corruption, not tampering. Authenticity is out of scope for this repo; in CT-01 it comes from the sealed AES-256-GCM layer, not the frame CRC-32. Per the UX contract it is never shown on dashboards (device log / test use only).
+- Integrity hash: SHA-256 of the original vs the decoded bytes (`INTEGRITY_HASH=sha256:<hex>`). It is not a MAC: it detects accidental corruption, not tampering. Authenticity is out of scope for this repo; in CT-01, at-rest authenticity comes from the AES-256-GCM sealed buffer/log; in-transit authenticity (TLS / per-frame MAC) is open pre-pilot. Per the UX contract it is never shown on dashboards (device log / test use only).
 - Exit code: 0 on a verified round-trip, 2 on any round-trip mismatch, 1 if the input file cannot be opened.
 - Test hooks: `--decoded-output FILE` (decoded bytes) and `--dump-codes FILE` (`sym len` per used symbol).
 - Integrity failure is reported and can be mapped to the device fault path (send uncompressed + notify).
