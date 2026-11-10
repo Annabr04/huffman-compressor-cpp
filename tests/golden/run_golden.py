@@ -6,15 +6,21 @@ Usage:
   run_golden.py --bin PATH            # verify vectors, run binary, exit nonzero on any failure
 Vectors marked 'legacy' are the 2026-11-02 review vectors, pinned by hash.
 Generated vectors are deterministic (Python random.Random, SEED below).
-Exit: 0 = all PASS/XFAIL, 1 = any FAIL / mismatch / unexpected pass.
+Exit: 0 = all PASS, 1 = any FAIL / mismatch.
+P2 hard assertions: every code length <= 15 (ct01 kHuffMaxBits), complete
+prefix code (Kraft sum == 1, single symbol excepted), and the binary's MODE
+matches ct01's rule: Huffman only if varint(n) + 128 + ceil(bits/8) < n,
+otherwise STORED (near_expand/highent must be STORED).
 """
 import argparse, hashlib, os, random, subprocess, sys, tempfile
+from collections import Counter
+from fractions import Fraction
 
 SEED = 20261102          # recorded PRNG seed for random_1mib
 HERE = os.path.dirname(os.path.abspath(__file__))
 VDIR = os.path.join(HERE, "vectors")
 SUMS = os.path.join(HERE, "SHA256SUMS")
-MAX_CODE_LEN = 15
+MAX_CODE_LEN = 15        # ct01 kHuffMaxBits; hard limit, not overridable
 
 def fib_weights(n):
     a, b, out = 1, 1, []
@@ -36,8 +42,16 @@ def gen():
     return v
 
 LEGACY = ["empty.bin", "one.bin", "zeros.bin", "highent.bin", "repet.bin", "fib.bin", "nul_mixed.bin"]
-# expected-fail: max Huffman code length > 15 until P2 length-limiting lands
-XFAIL_MAXLEN = {"fib.bin", "fib26_maxlen.bin"}
+# ct01 stored bypass must trigger on these (Huffman would not be smaller)...
+MUST_STORE = {"near_expand.bin", "highent.bin", "empty.bin"}
+# ...and must NOT trigger on these (exercise the Huffman path, incl. length limiting)
+MUST_HUFFMAN = {"fib.bin", "fib26_maxlen.bin", "zeros.bin", "two_sym.bin", "repet.bin"}
+
+def ct01_packed_size(n, bits):
+    """ct01 Huffman stream size: varint(n) + 128-byte length table + packed bits."""
+    vlen = 1
+    while n >= 0x80: n >>= 7; vlen += 1
+    return vlen + 128 + (bits + 7) // 8
 
 def sha(b): return hashlib.sha256(b).hexdigest()
 
@@ -53,8 +67,6 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--generate", action="store_true")
     ap.add_argument("--bin")
-    ap.add_argument("--max-code-len", type=int, default=MAX_CODE_LEN,
-                    help="code-length limit (default 15); override only for self-test")
     a = ap.parse_args()
     if a.generate:
         os.makedirs(VDIR, exist_ok=True)
@@ -87,9 +99,10 @@ def main():
             decoded = open(dec, "rb").read() if os.path.exists(dec) else None
             codes = read_dump(cdump)
         integ = b"INTEGRITY=PASS" in meta
-        enc = b""
+        enc = b""; mode = None
         for line in meta.split(b"\n"):
             if line.startswith(b"ENCODED="): enc = line[8:]
+            if line.startswith(b"MODE="): mode = line[5:].decode(errors="replace")
         # independent round-trip check: decoded bytes must hash to SHA256SUMS entry
         rt = decoded is not None and sha(decoded) == h and decoded == data
         ok = p.returncode == 0 and integ and out_exists and meta != b"" and rt
@@ -102,13 +115,24 @@ def main():
             ok = False; status = "FAIL"; detail += " codes=MISSING/MISMATCH"; ml = None
         else:
             ml = max(codes.values(), default=0); detail += f" maxlen={ml}"
-        if n in XFAIL_MAXLEN:
-            if ok and ml <= a.max_code_len: status = "XPASS(unexpected)"; fails += 1; detail += " -> remove XFAIL marker"
-            elif ok: status = "XFAIL"; detail += f">{a.max_code_len} (round-trip ok; awaiting P2 length-limit)"
-            else: fails += 1
-        elif ok and ml > a.max_code_len:
-            status = "FAIL"; fails += 1; detail += f">{a.max_code_len}"
-        elif not ok: fails += 1
+        problems = []
+        if ml is not None:
+            # hard assertion: max code length <= 15
+            if ml > MAX_CODE_LEN: problems.append(f"maxlen>{MAX_CODE_LEN}")
+            if codes and len(codes) > 1 and sum(Fraction(1, 2 ** l) for l in codes.values()) != 1:
+                problems.append("kraft!=1")
+            if len(codes) == 1 and list(codes.values()) != [1]: problems.append("single-sym-len!=1")
+            freq = Counter(data)
+            hbits = sum(freq[s] * codes[s] for s in codes)
+            want = "STORED" if len(data) == 0 or ct01_packed_size(len(data), hbits) >= len(data) else "HUFFMAN"
+            detail += f" mode={mode}"
+            if mode != want: problems.append(f"mode!={want}")
+            if n in MUST_STORE and mode != "STORED": problems.append("stored-bypass-missing")
+            if n in MUST_HUFFMAN and mode != "HUFFMAN": problems.append("huffman-expected")
+            if len(enc) != (8 * len(data) if want == "STORED" else hbits): problems.append("bitcount")
+        if problems:
+            ok = False; status = "FAIL"; detail += " " + ",".join(problems)
+        if not ok: fails += 1
         print(f"{status:18} {n:18} sha256={h[:16]} {detail}")
     print(f"RESULT: {'FAIL' if fails else 'OK'} ({fails} failure(s))")
     return 1 if fails else 0
