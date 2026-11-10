@@ -6,7 +6,7 @@ A simple C++ Huffman coding implementation extended for device/app integration c
 - Frequency counting and canonical, length-limited (max 15 bits) Huffman codes identical to CT-01's `huffman.cpp`
 - Stored bypass (`MODE=STORED`) when Huffman would not be smaller than the raw input
 - Encoding / decoding with round-trip verification
-- Lightweight integrity hash (FNV-1a) + exact decode match
+- SHA-256 integrity hash (self-contained `sha256.hpp`, FIPS 180-4, no external deps) + exact decode match
 - `--diagnostic` flag that enforces lossless lock (no lossy path)
 - File input/output for synthetic payloads or sensor-stream style data
 - Metadata output suitable for a companion dashboard or device log
@@ -29,7 +29,7 @@ The prompt goes to stderr and only when stdin is a terminal, so piped stdout sta
 ./huff --input sample.txt --output payload.meta --diagnostic
 ```
 
-This produces a small metadata file containing the mode (`MODE=HUFFMAN` or `MODE=STORED`), the encoded bits (ASCII '0'/'1'; in STORED mode each raw byte as 8 bits, MSB first), original hash, and integrity result — useful as a reference for the Entropy + Verify stages of a medical data compression device.
+This produces a small metadata file containing the mode (`MODE=HUFFMAN` or `MODE=STORED`), the encoded bits (ASCII '0'/'1'; in STORED mode each raw byte as 8 bits, MSB first), `INTEGRITY_HASH=sha256:<hex>` of the original input, and integrity result — useful as a reference for the Entropy + Verify stages of a medical data compression device.
 
 ## Reference scope (not a CT-01 wire format)
 - `MODE=` (`HUFFMAN` / `STORED`) and the other `KEY=value` lines are reference metadata for tests and dashboards, not a wire format. The CT-01 wire format (CT1F frame + CRC-32) lives only in ct01.
@@ -39,6 +39,7 @@ This produces a small metadata file containing the mode (`MODE=HUFFMAN` or `MODE
 
 ## Integration Notes
 - Diagnostic mode locks the path to lossless (matching CT-01 behavior).
+- Integrity hash: SHA-256 of the original vs the decoded bytes (`INTEGRITY_HASH=sha256:<hex>`; this replaced the earlier `ORIGINAL_HASH=<FNV-1a hex>` key). It is not a MAC: it detects accidental corruption, not tampering. Per the UX contract it is never shown on dashboards (device log / test use only).
 - Exit code: 0 on a verified round-trip, 2 on any round-trip mismatch, 1 if the input file cannot be opened.
 - Test hooks: `--decoded-output FILE` (decoded bytes) and `--dump-codes FILE` (`sym len` per used symbol).
 - Integrity failure is reported and can be mapped to the device fault path (send uncompressed + notify).
