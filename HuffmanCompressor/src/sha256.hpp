@@ -1,6 +1,11 @@
 // sha256.hpp - small self-contained SHA-256 (FIPS 180-4), C++17, no deps.
 // Written for this repo from the FIPS 180-4 specification; public-domain style,
 // use freely. Used only for the round-trip integrity check (it is not a MAC).
+// Header-only and ODR-safe: everything is in namespace sha256; free functions
+// are `inline`, member functions are defined in-class (implicitly inline,
+// including the stateless static member rotr), and the round-constant table is
+// a static constexpr class member, implicitly inline in C++17. No globals, no
+// mutable or non-inline statics.
 #pragma once
 #include <array>
 #include <cstddef>
@@ -51,9 +56,7 @@ public:
     }
 
 private:
-    static std::uint32_t rotr(std::uint32_t x, unsigned n) { return (x >> n) | (x << (32 - n)); }
-    void block(const std::uint8_t* b) {
-        static constexpr std::uint32_t K[64] = {
+    static constexpr std::uint32_t K[64] = {  // FIPS 180-4 4.2.2; implicitly inline (C++17)
             0x428a2f98u, 0x71374491u, 0xb5c0fbcfu, 0xe9b5dba5u, 0x3956c25bu, 0x59f111f1u, 0x923f82a4u, 0xab1c5ed5u,
             0xd807aa98u, 0x12835b01u, 0x243185beu, 0x550c7dc3u, 0x72be5d74u, 0x80deb1feu, 0x9bdc06a7u, 0xc19bf174u,
             0xe49b69c1u, 0xefbe4786u, 0x0fc19dc6u, 0x240ca1ccu, 0x2de92c6fu, 0x4a7484aau, 0x5cb0a9dcu, 0x76f988dau,
@@ -62,6 +65,8 @@ private:
             0xa2bfe8a1u, 0xa81a664bu, 0xc24b8b70u, 0xc76c51a3u, 0xd192e819u, 0xd6990624u, 0xf40e3585u, 0x106aa070u,
             0x19a4c116u, 0x1e376c08u, 0x2748774cu, 0x34b0bcb5u, 0x391c0cb3u, 0x4ed8aa4au, 0x5b9cca4fu, 0x682e6ff3u,
             0x748f82eeu, 0x78a5636fu, 0x84c87814u, 0x8cc70208u, 0x90befffau, 0xa4506cebu, 0xbef9a3f7u, 0xc67178f2u};
+    static std::uint32_t rotr(std::uint32_t x, unsigned n) { return (x >> n) | (x << (32 - n)); }
+    void block(const std::uint8_t* b) {
         std::uint32_t w[64];
         for (int i = 0; i < 16; ++i)
             w[i] = (std::uint32_t{b[4 * i]} << 24) | (std::uint32_t{b[4 * i + 1]} << 16) |
@@ -96,7 +101,7 @@ inline Digest hash(const std::string& s) {
 }
 
 inline std::string hex(const Digest& d) {
-    static const char* k = "0123456789abcdef";
+    constexpr char k[] = "0123456789abcdef";
     std::string out;
     out.reserve(64);
     for (std::uint8_t v : d) {
