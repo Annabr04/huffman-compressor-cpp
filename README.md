@@ -12,6 +12,8 @@ See HuffmanCompressor/README.md for usage.
 >
 > **Known limitations:** `ENCODED` is still an ASCII '0'/'1' bitstring (no packed binary, no frame or CRC; that is P4). This repo is an Entropy-stage/verification reference, not a CT-01 wire format.
 >
-> **Integrity hash:** SHA-256 (self-contained `HuffmanCompressor/src/sha256.hpp`) of the original vs the decoded bytes, written as `INTEGRITY_HASH=sha256:<hex>`. It detects accidental corruption only; it is **not a MAC** (no key, no authenticity). Per the UX contract the hash is never shown on dashboards.
+> **Integrity hash:** SHA-256 (self-contained `HuffmanCompressor/src/sha256.hpp`) of the original vs the decoded bytes, written as `INTEGRITY_HASH=sha256:<hex>`. It detects accidental corruption only; it is **not a MAC**, and authenticity is out of scope for this repo (in CT-01, authenticity comes from the sealed AES-256-GCM layer, not the frame CRC-32). Per the UX contract the hash is never shown on dashboards.
+>
+> **Metadata key change (for parsers, e.g. Data Engineer / UX):** `ORIGINAL_HASH=<16-hex FNV-1a>` was replaced by `INTEGRITY_HASH=sha256:<64-hex>` (same position, line 2). The old key is no longer emitted.
 >
 > **Scope:** `MODE=` is reference metadata, not a wire format. ct01's Entropy-stage input is post-LZ77, so absolute ratios here won't match ct01 end-to-end; the stored rule here applies to raw input. The decoder is not hardened for untrusted input yet (it only decodes its own in-process output); full hardening comes in P4.

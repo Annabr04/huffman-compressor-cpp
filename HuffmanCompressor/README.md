@@ -37,9 +37,12 @@ This produces a small metadata file containing the mode (`MODE=HUFFMAN` or `MODE
 - The decoder only decodes the binary's own just-produced output in-process (no CLI path reads external `ENCODED` or metadata). It is not hardened for untrusted input yet (no Kraft/over-subscription or padding rejection); full hardening comes in P4.
 - **P4 TODO (external decode):** when a decode path for received data lands, keep the per-symbol `len <= 15` check and add Kraft `<= 1` (over-subscription) validation on the received length table, plus ct01's nonzero-padding and trailing-bits rejection, with negative tests.
 
+## Metadata key change (for parsers)
+`ORIGINAL_HASH=<16-hex FNV-1a>` has been replaced by `INTEGRITY_HASH=sha256:<64-hex>` (same position, line 2 of the `--output` file). The old key is not emitted alongside it; anything parsing the metadata (Data Engineer pipelines, UX status screens) must read `INTEGRITY_HASH` and treat the `sha256:` prefix as part of the value.
+
 ## Integration Notes
 - Diagnostic mode locks the path to lossless (matching CT-01 behavior).
-- Integrity hash: SHA-256 of the original vs the decoded bytes (`INTEGRITY_HASH=sha256:<hex>`; this replaced the earlier `ORIGINAL_HASH=<FNV-1a hex>` key). It is not a MAC: it detects accidental corruption, not tampering. Per the UX contract it is never shown on dashboards (device log / test use only).
+- Integrity hash: SHA-256 of the original vs the decoded bytes (`INTEGRITY_HASH=sha256:<hex>`). It is not a MAC: it detects accidental corruption, not tampering. Authenticity is out of scope for this repo; in CT-01 it comes from the sealed AES-256-GCM layer, not the frame CRC-32. Per the UX contract it is never shown on dashboards (device log / test use only).
 - Exit code: 0 on a verified round-trip, 2 on any round-trip mismatch, 1 if the input file cannot be opened.
 - Test hooks: `--decoded-output FILE` (decoded bytes) and `--dump-codes FILE` (`sym len` per used symbol).
 - Integrity failure is reported and can be mapped to the device fault path (send uncompressed + notify).
