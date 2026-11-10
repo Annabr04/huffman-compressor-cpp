@@ -11,6 +11,9 @@ P2 hard assertions: every code length <= 15 (ct01 kHuffMaxBits), complete
 prefix code (Kraft sum == 1, single symbol excepted), and the binary's MODE
 matches ct01's rule: Huffman only if varint(n) + 128 + ceil(bits/8) < n,
 otherwise STORED (near_expand/highent must be STORED).
+ENCODED is compiler-stable since P2, so its SHA-256 is pinned per vector in
+ENCODED_SHA256SUMS (D1): any bit flip or code/tie/flattening change FAILs.
+Re-pin only for a reviewed codec change: run_golden.py --bin PATH --pin-encoded.
 Every vector is also fed via stdin (no --input): same metadata as file mode,
 exact decoded bytes, rc 0, and nothing on stderr (no prompt when not a tty).
 Empty stdin must round-trip like empty.bin (MODE=STORED, empty ENCODED, rc 0).
@@ -23,6 +26,7 @@ SEED = 20261102          # recorded PRNG seed for random_1mib
 HERE = os.path.dirname(os.path.abspath(__file__))
 VDIR = os.path.join(HERE, "vectors")
 SUMS = os.path.join(HERE, "SHA256SUMS")
+ENC_SUMS = os.path.join(HERE, "ENCODED_SHA256SUMS")
 MAX_CODE_LEN = 15        # ct01 kHuffMaxBits; hard limit, not overridable
 
 def fib_weights(n):
@@ -42,13 +46,21 @@ def gen():
     w = fib_weights(26)                                # 26-symbol Fibonacci alphabet
     v["fib26_maxlen.bin"] = b"".join(bytes([0x41 + i]) * c for i, c in enumerate(w))
     v["random_1mib.bin"] = random.Random(SEED).randbytes(1 << 20)
+    # D3: MODE boundary. Two symbols, 1 bit each: packed = 2 + 128 + ceil(n/8).
+    v["two_149.bin"] = b"B" + b"A" * 148               # packed 149 == n -> STORED (>=)
+    v["two_150.bin"] = b"B" + b"A" * 149               # packed 149 <  n -> HUFFMAN
+    # D2: heavy halving. Weights 1,1,2,4,...,2^17 (19 symbols): plain max len 18,
+    # needs 3 rounds of (x+1)/2 flattening, ends at exactly 15 bits.
+    v["halving_pow2_19.bin"] = b"".join(bytes([0x41 + i]) * (1 if i == 0 else 1 << (i - 1)) for i in range(19))
     return v
 
 LEGACY = ["empty.bin", "one.bin", "zeros.bin", "highent.bin", "repet.bin", "fib.bin", "nul_mixed.bin"]
 # ct01 stored bypass must trigger on these (Huffman would not be smaller)...
-MUST_STORE = {"near_expand.bin", "highent.bin", "empty.bin"}
+MUST_STORE = {"near_expand.bin", "highent.bin", "empty.bin", "two_149.bin"}
 # ...and must NOT trigger on these (exercise the Huffman path, incl. length limiting)
-MUST_HUFFMAN = {"fib.bin", "fib26_maxlen.bin", "zeros.bin", "two_sym.bin", "repet.bin"}
+MUST_HUFFMAN = {"fib.bin", "fib26_maxlen.bin", "zeros.bin", "two_sym.bin", "repet.bin", "two_150.bin",
+                "halving_pow2_19.bin"}
+EXPECT_MAXLEN = {"halving_pow2_19.bin": 15}
 
 def ct01_packed_size(n, bits):
     """ct01 Huffman stream size: varint(n) + 128-byte length table + packed bits."""
@@ -70,6 +82,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--generate", action="store_true")
     ap.add_argument("--bin")
+    ap.add_argument("--pin-encoded", action="store_true",
+                    help="(re)write ENCODED_SHA256SUMS from --bin; only after a reviewed codec change")
     a = ap.parse_args()
     if a.generate:
         os.makedirs(VDIR, exist_ok=True)
@@ -84,6 +98,10 @@ def main():
     if not a.bin: ap.error("--bin or --generate required")
     fails = 0
     file_meta = {}
+    enc_pins = {}
+    if os.path.exists(ENC_SUMS):
+        enc_pins = {l.split()[1]: l.split()[0] for l in open(ENC_SUMS) if l.strip()}
+    new_pins = {}
     expected = {l.split()[1]: l.split()[0] for l in open(SUMS) if l.strip()}
     gv = gen()
     for n in LEGACY + list(gv):
@@ -135,6 +153,12 @@ def main():
             if n in MUST_STORE and mode != "STORED": problems.append("stored-bypass-missing")
             if n in MUST_HUFFMAN and mode != "HUFFMAN": problems.append("huffman-expected")
             if len(enc) != (8 * len(data) if want == "STORED" else hbits): problems.append("bitcount")
+            if n in EXPECT_MAXLEN and ml != EXPECT_MAXLEN[n]: problems.append(f"maxlen!={EXPECT_MAXLEN[n]}")
+        # D1: pinned ENCODED content (compiler-stable since P2)
+        eh = sha(enc); new_pins[n] = eh
+        if not a.pin_encoded:
+            if n not in enc_pins: problems.append("encoded-pin-missing")
+            elif enc_pins[n] != eh: problems.append("encoded-sha!=pinned")
         if problems:
             ok = False; status = "FAIL"; detail += " " + ",".join(problems)
         if not ok: fails += 1
@@ -157,6 +181,12 @@ def main():
             problems.append("empty-stdin-not-stored")
         if problems: fails += 1
         print(f"{'FAIL' if problems else 'PASS':18} stdin:{n:12} {','.join(problems) or 'rc=0 meta==file-mode roundtrip=OK'}")
+    if a.pin_encoded:
+        if fails: print("not pinning: failures present")
+        else:
+            with open(ENC_SUMS, "w") as fh:
+                for n in sorted(new_pins): fh.write(f"{new_pins[n]}  {n}\n")
+            print(f"pinned {len(new_pins)} ENCODED sha256 -> {os.path.basename(ENC_SUMS)}")
     print(f"RESULT: {'FAIL' if fails else 'OK'} ({fails} failure(s))")
     return 1 if fails else 0
 
