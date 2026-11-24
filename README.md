@@ -13,3 +13,7 @@ See HuffmanCompressor/README.md for usage.
 > **Known limitations:** `ENCODED` is still an ASCII '0'/'1' bitstring (no packed binary, no frame or CRC; that is P4), and the integrity hash is FNV-1a, not SHA-256. This repo is an Entropy-stage/verification reference, not a CT-01 wire format.
 >
 > **Scope:** `MODE=` is reference metadata, not a wire format. ct01's Entropy-stage input is post-LZ77, so absolute ratios here won't match ct01 end-to-end; the stored rule here applies to raw input. The decoder is not hardened for untrusted input yet (it only decodes its own in-process output); full hardening comes in P4.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
